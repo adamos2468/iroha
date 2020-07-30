@@ -1,6 +1,6 @@
 compile:
-	g++ main.cpp consensus.cpp messages/consensus.pb.cc messages/validator.pb.cc messages/pbft-message.pb.cc -o peer -lzmqpp -lpthread -lzmq -lprotobuf
-	g++ proxy.cpp -o proxy -lzmqpp -lzmq
+	g++ main.cpp consensus.cpp zmq_channel.cpp messages/consensus.pb.cc messages/validator.pb.cc messages/pbft-message.pb.cc -o peer -lzmqpp -lpthread -lzmq -lprotobuf
+	g++ proxy.cpp messages/consensus.pb.cc -o proxy -lzmqpp -lpthread -lzmq -lprotobuf
 	cd ~/Hyperledger/Sawtooth/sawtooth-pbft; cargo build
 run:
 	#./proxy &
@@ -40,6 +40,7 @@ fourTest:
 	make kill
 
 kill:
+	-kill -9 `pgrep proxy`
 	-kill -9 `pgrep peer`
 	-kill -9 `pgrep pbft`
 proto:

@@ -42,6 +42,7 @@ namespace iroha{
             this->network_endpoint=network_endpoint;
             this->proxy_endpoint=proxy_endpoint;
             this->localPeer.set_peer_id(hexToBin(peerInfo));
+            connected_peers.insert(localPeer.peer_id());
             this->myHexId=peerInfo;
         }
         void consensusProxy::testInit(){
@@ -80,23 +81,25 @@ namespace iroha{
             dec.ParseFromString(msg);
             return {id, dec};
         }
-        bool consensusProxy::sendMsg(std::shared_ptr<zmqpp::socket> socket ,std::string id ,message::Message msg){
+        /*bool consensusProxy::sendMsg(std::shared_ptr<zmqpp::socket> socket ,std::string id ,message::Message msg){
             std::string buf;
             msg.SerializeToString(&buf);
+            channel.push_msg("")
             zmqpp::message reply;
             reply<<id;
             reply<<buf;
             return socket->send(reply);
-        }
+        }*/
         message::ConsensusRegisterResponse consensusProxy::handleConsensusRegisterReq(message::ConsensusRegisterRequest request){
             this->EngineInfo.name=request.name();
             this->EngineInfo.version=request.version();
             for(auto x:request.additional_protocols())
                 this->EngineInfo.additional_protocols.push_back(x);
             message::ConsensusRegisterResponse ans;
-            
-                //ans.set_status(message::ConsensusRegisterResponse_Status::ConsensusRegisterResponse_Status_NOT_READY); When Peers<4 (Need to Add Dynamic Peering)
             ans.set_status(message::ConsensusRegisterResponse_Status::ConsensusRegisterResponse_Status_OK);
+            if(connected_peers.size()<4){
+                ans.set_status(message::ConsensusRegisterResponse_Status::ConsensusRegisterResponse_Status_NOT_READY); //When Peers<4 (Need to Add Dynamic Peering)
+            }
             ans.set_allocated_local_peer_info(&localPeer);
             chainhead=blockchain.back();
             
@@ -150,7 +153,8 @@ namespace iroha{
             zmqpp::message out;
             out<<msg_buf;
             //!MAY NEED MUTEX!
-            network_socket->send(out);
+            channel.push_msg("network", "", msg_buf);
+            //network_socket->send(out);
         }
         message::ConsensusBroadcastResponse consensusProxy::handleConsensusBroadcastReq(message::ConsensusBroadcastRequest request){
             std::cout<<"\t"<<request.message_type()<<std::endl;
@@ -160,9 +164,10 @@ namespace iroha{
             ans.set_status(message::ConsensusBroadcastResponse_Status::ConsensusBroadcastResponse_Status_OK);
             return ans;
         }
+        //TODO Create Block from iroha 
         message::ConsensusBlock consensusProxy::initializeBlock(){
             message::ConsensusBlock temp;
-            temp.set_block_id(std::to_string(blockchain.size()));
+            temp.set_block_id(std::to_string(blockchain.size()+1));
             temp.set_payload("deadbeef");
             temp.set_signer_id(localPeer.peer_id());
             temp.set_summary("deadbeef"+std::to_string(blockchain.size()));
@@ -172,6 +177,7 @@ namespace iroha{
         }
         message::ConsensusInitializeBlockResponse consensusProxy::handleBlockInitReq(message::ConsensusInitializeBlockRequest request){
             canditateBlock=initializeBlock();//Create the new block
+            newblock=false;
             message::ConsensusInitializeBlockResponse ans;
             ans.set_status(message::ConsensusInitializeBlockResponse_Status::ConsensusInitializeBlockResponse_Status_OK);
             return ans;
@@ -191,7 +197,8 @@ namespace iroha{
             blocknew.SerializeToString(&buf);
             msg.set_content(buf);
             msg.set_correlation_id("randomcorelation");
-            sendMsg(engine_socket, engine_id, msg);
+            channel.push_msg("engine", engine_id, msg.SerializeAsString());
+            //sendMsg(engine_socket, engine_id, msg);
             blocknew.release_block();
         }
         void consensusProxy::NotifyBlockValid(std::string blockid){
@@ -203,7 +210,8 @@ namespace iroha{
             blockvalid.SerializeToString(&buf);
             msg.set_content(buf);
             msg.set_correlation_id("randomcorelation");
-            sendMsg(engine_socket, engine_id, msg);
+            channel.push_msg("engine", engine_id, msg.SerializeAsString());
+            //sendMsg(engine_socket, engine_id, msg);
         }
         void consensusProxy::NotifyBlockInvalid(std::string blockid){
             message::ConsensusNotifyBlockInvalid blockinvalid;
@@ -214,7 +222,8 @@ namespace iroha{
             blockinvalid.SerializeToString(&buf);
             msg.set_content(buf);
             msg.set_correlation_id("randomcorelation");
-            sendMsg(engine_socket, engine_id, msg);
+            channel.push_msg("engine", engine_id, msg.SerializeAsString());
+            //sendMsg(engine_socket, engine_id, msg);
         }
         void consensusProxy::BroadCastCanditateBlock(){
             std::string buf;
@@ -226,9 +235,13 @@ namespace iroha{
             //Need to do something with the consensus data
             //canditateBlock.set_summary(canditateBlock.summary()+"_c");
             //canditateBlock.set_block_id(canditateBlock.block_id()+"_c");
+            canditateBlock.set_payload(request.data());
             message::ConsensusFinalizeBlockResponse ans;
             BroadCastCanditateBlock();
-            NotifyBlockNew();
+            if(newblock==false){
+                newblock=true;
+                NotifyBlockNew();
+            }
             ans.set_block_id(canditateBlock.block_id());
             ans.set_status(message::ConsensusFinalizeBlockResponse_Status::ConsensusFinalizeBlockResponse_Status_OK);
             return ans;
@@ -241,12 +254,33 @@ namespace iroha{
             response.set_status(message::ConsensusCheckBlocksResponse_Status::ConsensusCheckBlocksResponse_Status_OK);
             return response;
         }
+        void consensusProxy::NotifyBlockCommit(std::string blockid){
+            message::ConsensusNotifyBlockCommit notfyCommit;
+            notfyCommit.set_block_id(blockid);
+            std::string buf=notfyCommit.SerializeAsString();
+
+            message::Message msg;
+            msg.set_message_type(message::Message_MessageType::Message_MessageType_CONSENSUS_NOTIFY_BLOCK_COMMIT);
+            msg.set_correlation_id("Hakuna Matata");
+            msg.set_content(buf);
+            std::string msgbuf=msg.SerializeAsString();
+
+            channel.push_msg("engine", engine_id, msgbuf);
+        }
         message::ConsensusCommitBlockResponse consensusProxy::handleBlockCommitReq(message::ConsensusCommitBlockRequest request){
             blockchain.push_back(canditateBlock);
+            NotifyBlockCommit(request.block_id());
             message::ConsensusCommitBlockResponse response;
             response.set_status(message::ConsensusCommitBlockResponse_Status::ConsensusCommitBlockResponse_Status_OK);
             return response;
         }
+        message::ConsensusFailBlockResponse consensusProxy::handleFailBlockReq(message::ConsensusFailBlockRequest request){
+            //Delete the block in request
+            message::ConsensusFailBlockResponse response;
+            response.set_status(message::ConsensusFailBlockResponse_Status::ConsensusFailBlockResponse_Status_OK);
+            return response;
+        }
+
         message::Message consensusProxy::handleEngineMessage(message::Message request){
             std::cerr<<myHexId<<" Received: "<<Message_MessageType_Name(request.message_type())<<std::endl;
             message::Message ans;
@@ -297,7 +331,6 @@ namespace iroha{
                 finalres.SerializeToString(&buf);
                 ans.set_content(buf);
                 ans.set_message_type(message::Message::CONSENSUS_FINALIZE_BLOCK_RESPONSE);
-                std::this_thread::sleep_for(std::chrono::milliseconds(1500));
             }else if(request.message_type()==message::Message::CONSENSUS_CHECK_BLOCKS_REQUEST){
                 message::ConsensusCheckBlocksRequest checkreq;
                 checkreq.ParseFromString(request.content());
@@ -312,6 +345,13 @@ namespace iroha{
                 commitres.SerializeToString(&buf);
                 ans.set_content(buf);
                 ans.set_message_type(message::Message::CONSENSUS_COMMIT_BLOCK_RESPONSE);
+            }else if(request.message_type()==message::Message::CONSENSUS_FAIL_BLOCK_REQUEST){
+                message::ConsensusFailBlockRequest failreq;
+                failreq.ParseFromString(request.content());
+                message::ConsensusFailBlockResponse failres=handleFailBlockReq(failreq);
+                failres.SerializeToString(&buf);
+                ans.set_content(buf);
+                ans.set_message_type(message::Message::CONSENSUS_FAIL_BLOCK_RESPONSE);
             }
             return ans;
         }
@@ -322,7 +362,8 @@ namespace iroha{
             message::Message msg=mlprt_msg.second;
             if(msg.message_type()==message::Message::CONSENSUS_REGISTER_REQUEST){
                 message::Message ans=handleEngineMessage(msg);
-                sendMsg(engine_socket, con_id,ans);
+                channel.push_msg("engine", engine_id, ans.SerializeAsString());
+                //sendMsg(engine_socket, con_id,ans);
                 return true;
             }
             std::cerr<<"Got: "<<Message_MessageType_Name(msg.message_type())<<" Expected: "<<Message_MessageType_Name(message::Message::CONSENSUS_REGISTER_REQUEST)<<std::endl;
@@ -335,7 +376,8 @@ namespace iroha{
                 message::Message msg=mlprt_msg.second;
                 message::Message ans=handleEngineMessage(msg);
                 if(msg.message_type()!=message::Message_MessageType::Message_MessageType_CONSENSUS_NOTIFY_ACK){
-                    sendMsg(engine_socket, con_id,ans);
+                    channel.push_msg("engine", engine_id, ans.SerializeAsString());
+                    //sendMsg(engine_socket, con_id,ans);
                 }
             }
         }
@@ -356,22 +398,39 @@ namespace iroha{
             toTheEngine.set_message_type(message::Message_MessageType::Message_MessageType_CONSENSUS_NOTIFY_PEER_MESSAGE);
             toTheEngine.set_content(buf);
             toTheEngine.set_correlation_id("Hakuna Matata");
-
-            sendMsg(engine_socket, engine_id, toTheEngine);
+            std::string msgstr;
+            toTheEngine.SerializeToString(&msgstr);
+            channel.push_msg("engine", engine_id, msgstr);
+            //sendMsg(engine_socket, engine_id, toTheEngine);
             notfymsg.release_message();
+        }
+        void consensusProxy::showPresence(){
+            message::ConsensusPeerMessage peermsg=getPeerMessage("Bonjour!", localPeer.peer_id());
+            std::string buf;
+            peermsg.SerializeToString(&buf);
+            zmqpp::message output;
+            output<<buf;
+            channel.push_msg("network", "", buf);
+            //network_socket->send(output);
         }
         void consensusProxy::handlePeerMsg(std::string id, message::ConsensusPeerMessage msg){
             message::ConsensusPeerMessageHeader header;
             //Check for header signature
             header.ParseFromString(msg.header());
             std::cerr<<myHexId<<" Received "<<header.message_type()<<" from "<<binToHex(id)<<"\n";
-            if(header.message_type()=="NewBlock"){
+            if(header.message_type()=="Bonjour!"){
+                if(!connected_peers.count(msg.content())){
+                    connected_peers.insert(msg.content());
+                    showPresence();
+                }
+            }
+            else if(header.message_type()=="NewBlock"){
                 message::ConsensusBlock neoblock;
                 neoblock.ParseFromString(msg.content());
-                //if(canditateBlock.block_id()!=neoblock.block_id()){
+                if(canditateBlock.block_id()!=neoblock.block_id()){
                     canditateBlock.ParseFromString(msg.content());
                     NotifyBlockNew();
-                //}
+                }
             }else{
                 NotifyPeerMsg(id, msg);
             }
@@ -394,20 +453,45 @@ namespace iroha{
             proxy_socket=std::shared_ptr<zmqpp::socket> (new zmqpp::socket(ctx, zmqpp::socket_type::subscribe));
             network_socket=std::shared_ptr<zmqpp::socket> (new zmqpp::socket(ctx, zmqpp::socket_type::dealer));
 
-            //printf("%s\n", engine_endpoint.c_str());
             engine_socket->bind(engine_endpoint);
             
             network_socket->set(zmqpp::socket_option::identity, localPeer.peer_id());
             proxy_socket->connect(proxy_endpoint);
             proxy_socket->subscribe("");
 
+            channel.add_socket(proxy_socket, "proxy");
+            channel.add_socket(engine_socket, "engine");
+            channel.add_socket(network_socket, "network");
+            std::thread channel_th(&zmq_channel::start, &channel);
             network_socket->connect(network_endpoint);
             network_socket->set(zmqpp::socket_option::identity, localPeer.peer_id());
-
-            std::thread engine_th(&consensusProxy::startEngine, this);
+            showPresence();
+            while(true){
+                std::string socket, id, msg;
+                if(channel.pop_msg(socket, id, msg)){
+                    if(id==localPeer.peer_id())
+                        continue;
+                    if(socket=="proxy"){
+                        message::ConsensusPeerMessage peermsg;
+                        peermsg.ParseFromString(msg);
+                        handlePeerMsg(id, peermsg);
+                    }else if(socket=="engine"){
+                        engine_id=id;
+                        message::Message response, request;
+                        request.ParseFromString(msg);
+                        if(request.message_type()==message::Message_MessageType::Message_MessageType_CONSENSUS_NOTIFY_ACK)
+                            continue;
+                        response=handleEngineMessage(request);
+                        channel.push_msg("engine", id, response.SerializeAsString());
+                    }
+                }
+            }
+            channel_th.join();
+            /*
             std::thread network_th(&consensusProxy::networkListener, this);
+            std::thread engine_th(&consensusProxy::startEngine, this);
             engine_th.join();
-            network_th.join();
+            network_th.join();*/
         }
     }
 }
