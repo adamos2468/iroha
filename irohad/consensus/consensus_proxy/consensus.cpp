@@ -72,24 +72,6 @@ namespace iroha{
                 peers.push_back(temp);    
             }
         }
-        std::pair<std::string, message::Message> consensusProxy::rcvMsg(std::shared_ptr<zmqpp::socket> socket){
-            std::string id, msg;
-            message::Message dec;
-            zmqpp::message zmq_message;
-            socket->receive(zmq_message);
-            zmq_message>>id>>msg;
-            dec.ParseFromString(msg);
-            return {id, dec};
-        }
-        /*bool consensusProxy::sendMsg(std::shared_ptr<zmqpp::socket> socket ,std::string id ,message::Message msg){
-            std::string buf;
-            msg.SerializeToString(&buf);
-            channel.push_msg("")
-            zmqpp::message reply;
-            reply<<id;
-            reply<<buf;
-            return socket->send(reply);
-        }*/
         message::ConsensusRegisterResponse consensusProxy::handleConsensusRegisterReq(message::ConsensusRegisterRequest request){
             this->EngineInfo.name=request.name();
             this->EngineInfo.version=request.version();
@@ -150,8 +132,6 @@ namespace iroha{
         void consensusProxy::broadcast(message::ConsensusPeerMessage msg){
             std::string msg_buf;
             msg.SerializeToString(&msg_buf);
-            zmqpp::message out;
-            out<<msg_buf;
             //!MAY NEED MUTEX!
             channel.push_msg("network", "", msg_buf);
             //network_socket->send(out);
@@ -355,7 +335,7 @@ namespace iroha{
             }
             return ans;
         }
-        bool consensusProxy::registerEngine(){
+        /*bool consensusProxy::registerEngine(){
             std::pair<std::string, message::Message> mlprt_msg= rcvMsg(engine_socket);
             std::string con_id=mlprt_msg.first;
             engine_id=con_id;
@@ -386,7 +366,7 @@ namespace iroha{
                 if(registerEngine()){
                     handleEngine();
                 }
-        }
+        }*/
         void consensusProxy::NotifyPeerMsg(std::string id, message::ConsensusPeerMessage msg){
             message::ConsensusNotifyPeerMessage notfymsg;
             notfymsg.set_allocated_message(&msg);
@@ -408,8 +388,6 @@ namespace iroha{
             message::ConsensusPeerMessage peermsg=getPeerMessage("Bonjour!", localPeer.peer_id());
             std::string buf;
             peermsg.SerializeToString(&buf);
-            zmqpp::message output;
-            output<<buf;
             channel.push_msg("network", "", buf);
             //network_socket->send(output);
         }
@@ -435,36 +413,23 @@ namespace iroha{
                 NotifyPeerMsg(id, msg);
             }
         }
-        void consensusProxy::networkListener(){
-            while(true){
-                zmqpp::message input;
-                std::string id, msg;
-                do{
-                    proxy_socket->receive(input);
-                    input>>id>>msg;
-                }while(id==localPeer.peer_id());
-                message::ConsensusPeerMessage peermsg;
-                peermsg.ParseFromString(msg);
-                handlePeerMsg(id, peermsg);
-            }
-        }
         void consensusProxy::start(){
-            engine_socket=std::shared_ptr<zmqpp::socket> (new zmqpp::socket(ctx, zmqpp::socket_type::router));
-            proxy_socket=std::shared_ptr<zmqpp::socket> (new zmqpp::socket(ctx, zmqpp::socket_type::subscribe));
-            network_socket=std::shared_ptr<zmqpp::socket> (new zmqpp::socket(ctx, zmqpp::socket_type::dealer));
+            engine_socket=std::shared_ptr<zmq::socket_t> (new zmq::socket_t(ctx, zmq::socket_type::router));
+            proxy_socket=std::shared_ptr<zmq::socket_t> (new zmq::socket_t(ctx, zmq::socket_type::sub));
+            network_socket=std::shared_ptr<zmq::socket_t> (new zmq::socket_t(ctx, zmq::socket_type::dealer));
 
             engine_socket->bind(engine_endpoint);
             
-            network_socket->set(zmqpp::socket_option::identity, localPeer.peer_id());
+            network_socket->setsockopt(ZMQ_IDENTITY, localPeer.peer_id().c_str(), localPeer.peer_id().size());
+            network_socket->connect(network_endpoint);
+
             proxy_socket->connect(proxy_endpoint);
-            proxy_socket->subscribe("");
+            proxy_socket->setsockopt(ZMQ_SUBSCRIBE, "", 0);
 
             channel.add_socket(proxy_socket, "proxy");
             channel.add_socket(engine_socket, "engine");
             channel.add_socket(network_socket, "network");
             std::thread channel_th(&zmq_channel::start, &channel);
-            network_socket->connect(network_endpoint);
-            network_socket->set(zmqpp::socket_option::identity, localPeer.peer_id());
             showPresence();
             while(true){
                 std::string socket, id, msg;
@@ -487,11 +452,6 @@ namespace iroha{
                 }
             }
             channel_th.join();
-            /*
-            std::thread network_th(&consensusProxy::networkListener, this);
-            std::thread engine_th(&consensusProxy::startEngine, this);
-            engine_th.join();
-            network_th.join();*/
         }
     }
 }

@@ -14,10 +14,10 @@ void zmq_channel::start(){
         for(auto x:sockets){
             auto the_socket=x.second;
             auto the_id=x.first;
-            zmqpp::message input;
-            if(the_socket->receive(input, true)){
-                std::string peerId, msg;
-                input>>peerId>>msg;
+            std::vector<zmq::message_t> input;
+            if(recv_multipart(*the_socket,std::back_inserter(input), zmq::recv_flags::dontwait)){
+                std::string peerId = std::string(static_cast<char*>(input[0].data()), input[0].size());
+                std::string msg=std::string(static_cast<char*>(input[1].data()), input[1].size());
                 in_queue_mtx.lock();
                 input_chan.push(packet(the_id, peerId, msg));
                 in_queue_mtx.unlock();
@@ -27,15 +27,11 @@ void zmq_channel::start(){
         while(!output_chan.empty()){
             auto temp=output_chan.front();
             output_chan.pop();
-            zmqpp::message output;
+            std::vector<zmq::message_t> output;
             if(temp.id.size())
-                output<<temp.id;
-            output<<temp.msg;
-            if(temp.socket=="engine"){
-                iroha::consensus::message::Message msg;
-                msg.ParseFromString(temp.msg);
-            }
-            sockets[temp.socket]->send(output);
+                output.push_back(zmq::message_t(temp.id));
+            output.push_back(zmq::message_t(temp.msg));
+            zmq::send_multipart(*sockets[temp.socket], output);
         }
         out_queue_mtx.unlock();
         sockets_vector_mtx.unlock();
@@ -67,7 +63,7 @@ bool zmq_channel::push_msg(std::string socket, std::string id, std::string msg){
     return true;
 }
 
-void zmq_channel::add_socket(std::shared_ptr<zmqpp::socket> newsocket, std::string identity){
+void zmq_channel::add_socket(std::shared_ptr<zmq::socket_t> newsocket, std::string identity){
     sockets_vector_mtx.lock();
     sockets.insert({identity, newsocket});
     sockets_vector_mtx.unlock();

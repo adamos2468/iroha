@@ -1,4 +1,5 @@
-#include<zmqpp/zmqpp.hpp>
+#include<zmq.hpp>
+#include <zmq_addon.hpp>
 #include<bits/stdc++.h>
 #include"zmq_channel.hpp"
 #include"messages/validator.pb.h"
@@ -13,15 +14,15 @@ namespace iroha{
                 bool newblock=false;
                 zmq_channel channel;
                 std::string myHexId;
-                zmqpp::context ctx;
+                zmq::context_t ctx;
                 std::string engine_endpoint;
                 std::string engine_id;
-                std::shared_ptr<zmqpp::socket> engine_socket;
+                std::shared_ptr<zmq::socket_t> engine_socket;
                 std::string network_endpoint;
-                std::shared_ptr<zmqpp::socket> network_socket;
+                std::shared_ptr<zmq::socket_t> network_socket;
 
                 std::string proxy_endpoint;
-                std::shared_ptr<zmqpp::socket> proxy_socket;
+                std::shared_ptr<zmq::socket_t> proxy_socket;
 
                 std::set<std::string> connected_peers; //ZMQ Stuff
                 std::vector<message::ConsensusBlock> blockchain;
@@ -37,8 +38,6 @@ namespace iroha{
                 std::string getSetting(std::string setting);
                 message::Message handleEngineMessage(message::Message request);
                 message::ConsensusSettingsGetResponse handleConsensusSettingsGetReq(message::ConsensusSettingsGetRequest request);
-                //bool sendMsg(std::shared_ptr<zmqpp::socket> socket, std::string id, message::Message responce);
-                std::pair<std::string, message::Message> rcvMsg(std::shared_ptr<zmqpp::socket> socket);
                 
                 message::ConsensusRegisterResponse          handleConsensusRegisterReq(message::ConsensusRegisterRequest request);
                 message::ConsensusBroadcastResponse         handleConsensusBroadcastReq(message::ConsensusBroadcastRequest request);
