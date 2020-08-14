@@ -7,6 +7,7 @@
 #define IROHA_SETTING_QUERY_HPP
 
 #include <boost/optional.hpp>
+#include <string_view>
 #include "common/result.hpp"
 #include "validators/settings.hpp"
 
@@ -23,7 +24,9 @@ namespace iroha {
       virtual expected::Result<
           std::unique_ptr<const shared_model::validation::Settings>,
           std::string>
-      get() = 0;
+      getValidationSettings() = 0;
+
+      virtual std::optional<std::string> getByKey(std::string_view key) = 0;
     };
   }  // namespace ametsuchi
 }  // namespace iroha

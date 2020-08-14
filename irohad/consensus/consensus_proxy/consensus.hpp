@@ -1,17 +1,38 @@
+/**
+ * Copyright Soramitsu Co., Ltd. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <bits/stdc++.h>
+#include <atomic>
+#include <condition_variable>
+#include <thread>
+
+#include <rxcpp/subjects/rx-subject.hpp>
 #include <zmq.hpp>
 #include <zmq_addon.hpp>
+#include "consensus/round.hpp"
+#include "interfaces/iroha_internal/block.hpp"
 #include "messages/consensus.pb.h"
 #include "messages/pbft-message.pb.h"
 #include "messages/validator.pb.h"
 #include "zmq_channel.hpp"
-#ifndef CONSENSUS_HPP
-#define CONSENSUS_HPP
+
+#ifndef IROHA_CONSENSUS_PROXY_CONSENSUS_HPP
+#define IROHA_CONSENSUS_PROXY_CONSENSUS_HPP
+
 namespace iroha {
+  namespace ametsuchi {
+    class SettingQuery;
+  }
+
+  namespace synchronizer {
+    class Synchronizer;
+  }
+
   namespace consensus {
     class consensusProxy {
      private:
-      bool newblock = false;
       zmq_channel channel;
       std::string myHexId;
       zmq::context_t ctx;
@@ -31,12 +52,47 @@ namespace iroha {
       message::ConsensusPeerInfo localPeer;
       message::ConsensusBlock chainhead;
       std::vector<message::ConsensusPeerInfo> peers;
+
+      using BlockCreationResult =
+          std::optional<std::shared_ptr<shared_model::interface::Block>>;
+
+      class PromisedBlock {
+       public:
+        PromisedBlock(std::future<BlockCreationResult> future_block);
+
+        BlockCreationResult &get();
+
+       private:
+        std::future<BlockCreationResult> promised_block_;
+        std::optional<BlockCreationResult> block_;
+      };
+      std::optional<PromisedBlock> candidate_block_;
+
+      std::shared_ptr<iroha::ametsuchi::SettingQuery> settings_query_;
+      std::shared_ptr<iroha::simulator::Simulator> simulator_;
+
+      // std::atomic_bool stop_;
+
+      std::shared_ptr<iroha::synchronizer::Synchronizer> synchronizer_;
+
+      /*
+      std::thread synchronizer_thread_;
+      std::mutex synchronization_mutex_;
+      bool synchronization_requested_;
+      std::condition_variable synchronization_cv_;
+      */
+      /*
+      rxcpp::observe_on_one_worker synchronizer_worker_;
+      rxcpp::composite_subscription synchronizer_subscription_;
+      rxcpp::subjects::subject<void> synchronizer_subject_;
+      */
+
       struct {
         std::string name, version;
         std::vector<message::ConsensusRegisterRequest_Protocol>
             additional_protocols;
       } EngineInfo;
-      std::string getSetting(std::string setting);
+      std::optional<std::string> getSetting(std::string setting);
       message::Message handleEngineMessage(message::Message request);
       message::ConsensusSettingsGetResponse handleConsensusSettingsGetReq(
           message::ConsensusSettingsGetRequest request);
@@ -74,12 +130,20 @@ namespace iroha {
       void networkListener();
       void handlePeerMsg(std::string id, message::ConsensusPeerMessage msg);
       message::ConsensusBlock initializeBlock();
+      PromisedBlock consensusProxy::prepareBlockAsync(
+          std::shared_ptr<const shared_model::interface::Proposal> proposal);
+      void synchronizeAsync() const;
+      std::string getBlockId(shared_model::interface::Block const &) const;
+      void updateBlockId(shared_model::interface::Block &) const;
+      BlockCreationResult &getCandidateBlock();
 
      public:
-      consensusProxy(std::string engine_endpoint,
-                     std::string network_endpoint,
-                     std::string proxy_endpoint,
-                     std::string peerInfo);
+      consensusProxy(
+          std::string engine_endpoint,
+          std::string network_endpoint,
+          std::string proxy_endpoint,
+          std::string peerInfo,
+          std::shared_ptr<iroha::ametsuchi::SettingQuery> settings_query);
       void start();
       void startEngine();
     };

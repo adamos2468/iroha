@@ -66,8 +66,7 @@ OnDemandOrderingGate::OnDemandOrderingGate(
             this->sendCachedTransactions();
 
             // request proposal for the current round
-            auto proposal = this->processProposalRequest(
-                network_client_->onRequestProposal(event.next_round));
+            auto proposal = this->requestProposal(event.next_round);
             // vote for the object received from the network
             proposal_notifier_.get_subscriber().on_next(
                 network::OrderingEvent{std::move(proposal),
@@ -114,10 +113,8 @@ void OnDemandOrderingGate::stop() {
 }
 
 boost::optional<std::shared_ptr<const shared_model::interface::Proposal>>
-OnDemandOrderingGate::processProposalRequest(
-    boost::optional<
-        std::shared_ptr<const OnDemandOrderingService::ProposalType>> proposal)
-    const {
+OnDemandOrderingGate::requestProposal(consensus::Round round) const {
+  auto proposal = network_client_->onRequestProposal(round);
   if (not proposal) {
     return boost::none;
   }

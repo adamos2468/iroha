@@ -8,6 +8,7 @@
 
 #include <rxcpp/rx-observable-fwd.hpp>
 
+#include "ametsuchi/commit_result.hpp"
 #include "consensus/gate_object.hpp"
 #include "synchronizer/synchronizer_common.hpp"
 
@@ -30,6 +31,8 @@ namespace iroha {
       virtual rxcpp::observable<SynchronizationEvent> on_commit_chain() = 0;
 
       virtual ~Synchronizer() = default;
+
+      virtual ametsuchi::CommitResult downloadAndCommitNewBlocks() = 0;
     };
 
   }  // namespace synchronizer

@@ -1,4 +1,35 @@
-#include "consensus.hpp"
+#include "consensus/consensus_proxy/consensus.hpp"
+
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <optional>
+
+#include "ametsuchi/setting_query.hpp"
+#include "common/result.hpp"
+#include "interfaces/common_objects/types.hpp"
+#include "synchronizer/synchronizer.hpp"
+
+namespace {
+  /*
+  void synchronizerWorker(
+      std::mutex &synchronization_mutex,
+      std::condition_variable &synchronization_cv,
+      bool &synchronization_requested,
+      std::atomic_bool &stop,
+      std::shared_ptr<iroha::synchronizer::Synchronizer> synchronizer) {
+    while (not stop) {
+      std::unique_lock<std::mutex> lock{synchronization_mutex};
+      synchronization_cv.wait(lock, [&] { return synchronization_requested; });
+      if (stop) {
+        break;
+      }
+      synchronizer->downloadAndCommitNewBlocks();
+    }
+  }
+  */
+}
+
 namespace iroha {
   namespace consensus {
     std::string hexToBin(std::string hex) {
@@ -36,10 +67,31 @@ namespace iroha {
       }
       return hex;
     }
-    consensusProxy::consensusProxy(std::string engine_endpoint,
-                                   std::string network_endpoint,
-                                   std::string proxy_endpoint,
-                                   std::string peerInfo) {
+    consensusProxy::consensusProxy(
+        std::string engine_endpoint,
+        std::string network_endpoint,
+        std::string proxy_endpoint,
+        std::string peerInfo,
+        std::shared_ptr<iroha::ametsuchi::SettingQuery> settings_query,
+        std::shared_ptr<iroha::synchronizer::Synchronizer> synchronizer)
+        : settings_query_(std::move(settings_query)),
+          synchronizer_thread_(synchronizerWorker,
+                               std::ref(synchronization_mutex_),
+                               std::ref(synchronization_cv_),
+                               std::ref(synchronization_requested_),
+                               std::ref(stop_),
+                               std::move(synchronizer)),
+    /*
+    synchronizer_worker_(rxcpp::observe_on_new_thread()),
+    synchronizer_subject_(synchronizer_worker_),
+    synchronizer_subscription_(
+        synchronizer_subject_.get_observable().subscribe(
+            [synchronizer = synchronizer_]() {
+              synchronizer->downloadAndCommitNewBlocks();
+            }))
+    */
+
+    {
       testInit();
       this->engine_endpoint = engine_endpoint;
       this->network_endpoint = network_endpoint;
@@ -48,6 +100,13 @@ namespace iroha {
       connected_peers.insert(localPeer.peer_id());
       this->myHexId = peerInfo;
     }
+
+    consensusProxy::~consensusProxy() {
+      stop_ = true;
+      synchronization_cv_.notify_one();
+      synchronizer_thread_.join();
+    }
+
     void consensusProxy::testInit() {
       message::ConsensusBlock genesis;
       genesis.set_block_id(std::to_string(blockchain.size() + 1));
@@ -104,10 +163,9 @@ namespace iroha {
       return ans;
     }
     // TODO READ THE SETTING TABLE
-    std::string consensusProxy::getSetting(std::string setting) {
-      if (consensus_settings.count(setting))
-        return consensus_settings[setting];
-      return "";
+    std::optional<std::string> consensusProxy::getSetting(
+        std::string_view setting) {
+      return settings_query_->getByKey(setting);
     }
     message::ConsensusSettingsGetResponse
     consensusProxy::handleConsensusSettingsGetReq(
@@ -117,11 +175,10 @@ namespace iroha {
                          ConsensusSettingsGetResponse_Status_OK);
       for (int i = 0; i < request.keys_size(); i++) {
         std::string key = request.keys(i);
-        std::string value = getSetting(key);
-        if (value != "") {
+        if (auto value = getSetting(key)) {
           message::ConsensusSettingsEntry *temp = ans.add_entries();
           temp->set_key(key);
-          temp->set_value(value);
+          temp->set_value(value.value());
         }
       }
       return ans;
@@ -173,12 +230,65 @@ namespace iroha {
       temp.set_block_num(blockchain.size());
       return temp;
     }
+
+    consensusProxy::PromisedBlock consensusProxy::prepareBlockAsync(
+        std::shared_ptr<const shared_model::interface::Proposal> proposal) {
+      return std::async(
+          std::launch::async,
+          [proposal = std::move(proposal), simulator = simulator_] {
+            auto verified_proposal_and_errors =
+                simulator.processProposal(*proposal);
+            return verified_proposal_and_errors.verified_proposal_result |
+                [&](auto const &verified_proposal) {
+                  return simulator.processVerifiedProposal(
+                      verified_proposal,
+                      verified_proposal_and_errors.ledger_state
+                          ->top_block_info);
+                }
+          });
+    }
+
+    BlockCreationResult &consensusProxy::getCandidateBlock() {
+      return candidate_block_ |
+          [](auto &candidate_block) { return candidate_block->get(); };
+    }
+
+    /*
+    void consensusProxy::synchronizeAsync() {
+      synchronizer_subject_.get_subscriber().on_next();
+    }
+    */
+
     message::ConsensusInitializeBlockResponse
     consensusProxy::handleBlockInitReq(
         message::ConsensusInitializeBlockRequest request) {
-      canditateBlock = initializeBlock();  // Create the new block
-      newblock = false;
       message::ConsensusInitializeBlockResponse ans;
+
+      if (ledger_state_->top_block_info.block_id != request.block_id) {
+        synchronizer_
+            ->downloadAndCommitNewBlocks();  // synchronize synchronously
+                                             // (sic!), because anyway we cannot
+                                             // do anything meaningful with an
+                                             // outdated state
+        if (ledger_state_->top_block_info.block_id != request.block_id) {
+          // could not synchronize up to expected block
+          ans.set_status(message::ConsensusInitializeBlockResponse_Status::
+                             ConsensusInitializeBlockResponse_Status_NOT_READY);
+          return ans;
+        }
+      }
+
+      auto proposal =
+          ordering_network_client_->requestProposal(ordering_round_);
+      if (not proposal) {
+        ordering_round_ = iroha::ordering::nextRejectRound(ordering_round_);
+        ans.set_status(message::ConsensusInitializeBlockResponse_Status::
+                           ConsensusInitializeBlockResponse_Status_NOT_READY);
+        return ans;
+      }
+
+      candidate_block_ = PromisedBlock{prepareBlockAsync()};
+
       ans.set_status(message::ConsensusInitializeBlockResponse_Status::
                          ConsensusInitializeBlockResponse_Status_OK);
       return ans;
@@ -186,9 +296,15 @@ namespace iroha {
     message::ConsensusSummarizeBlockResponse consensusProxy::handleBlockSumReq(
         message::ConsensusSummarizeBlockRequest request) {
       message::ConsensusSummarizeBlockResponse ans;
-      ans.set_summary(canditateBlock.summary());
-      ans.set_status(message::ConsensusSummarizeBlockResponse_Status::
-                         ConsensusSummarizeBlockResponse_Status_OK);
+      if (getCandidateBlock()) {
+        ans.set_summary(getCandidateBlock().value()->hash());
+        ans.set_status(message::ConsensusSummarizeBlockResponse_Status::
+                           ConsensusSummarizeBlockResponse_Status_OK);
+      } else {
+        ordering_round_ = iroha::ordering::nextRejectRound(ordering_round_);
+        ans.set_status(message::ConsensusSummarizeBlockResponse_Status::
+                           ConsensusSummarizeBlockResponse_Status_NOT_READY);
+      }
       return ans;
     }
     void consensusProxy::NotifyBlockNew() {
@@ -245,15 +361,25 @@ namespace iroha {
       // canditateBlock.set_summary(canditateBlock.summary()+"_c");
       // canditateBlock.set_block_id(canditateBlock.block_id()+"_c");
       canditateBlock.set_payload(request.data());
-      message::ConsensusFinalizeBlockResponse ans;
       BroadCastCanditateBlock();
+
+      // move this inside next if?
       if (newblock == false) {
         newblock = true;
         NotifyBlockNew();
       }
-      ans.set_block_id(canditateBlock.block_id());
-      ans.set_status(message::ConsensusFinalizeBlockResponse_Status::
-                         ConsensusFinalizeBlockResponse_Status_OK);
+
+      message::ConsensusFinalizeBlockResponse ans;
+      if (getCandidateBlock()) {
+        updateBlockId(*getCandidateBlock());
+        ans.set_block_id(getCandidateBlock().value()->blockId());  // signature?
+        ans.set_status(message::ConsensusFinalizeBlockResponse_Status::
+                           ConsensusFinalizeBlockResponse_Status_OK);
+      } else {
+        ordering_round_ = iroha::ordering::nextRejectRound(ordering_round_);
+        ans.set_status(message::ConsensusFinalizeBlockResponse_Status::
+                           ConsensusFinalizeBlockResponse_Status_NOT_READY);
+      }
       return ans;
     }
     message::ConsensusCheckBlocksResponse consensusProxy::handleBlockCheckReq(
@@ -526,6 +652,17 @@ namespace iroha {
         }
       }
       channel_th.join();
+    }
+
+    consensusProxy::PromisedBlock::PromisedBlock(
+        std::future<BlockCreationResult> future_block)
+        : promised_block_(std::move(future_block)) {}
+
+    BlockCreationResult &consensusProxy::PromisedBlock::get() {
+      if (not block_) {
+        block_ = promised_block_.get();
+      }
+      return block_.value();
     }
   }  // namespace consensus
 }  // namespace iroha
