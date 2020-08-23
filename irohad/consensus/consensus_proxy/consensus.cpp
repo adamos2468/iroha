@@ -1,4 +1,11 @@
+/**
+ * Copyright Soramitsu Co., Ltd. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include "consensus.hpp"
+
+#include <cassert>
 
 namespace {
   std::string getBlockId(shared_model::interface::Block const &block) {
@@ -181,9 +188,13 @@ namespace iroha {
       return temp;
     }
 
-    BlockCreationResult &consensusProxy::getCandidateBlock() {
-      return candidate_block_ |
-          [](auto &candidate_block) { return candidate_block->get(); };
+    std::optional<shared_ptr<shared_model::interface::Block>>
+    consensusProxy::getCandidateBlock() const {
+      return last_block_creator_event_ |
+          [](auto const &last_block_creator_event) {
+            return last_block_creator_event.round_data |
+                [](auto const &round_data) { return round_data.block; };
+          };
     }
 
     message::ConsensusInitializeBlockResponse
@@ -308,8 +319,13 @@ namespace iroha {
     }
     message::ConsensusCommitBlockResponse consensusProxy::handleBlockCommitReq(
         message::ConsensusCommitBlockRequest request) {
-      blockchain.push_back(canditateBlock);
-      NotifyBlockCommit(request.block_id());
+      auto canditate_block = getCandidateBlock();
+      assert(canditate_block);  // this ensures last_block_creator_event_
+      synchronizer_->processOutcome(
+          PairValid{last_block_creator_event_->round,
+                    last_block_creator_event_->ledger_state,
+                    canditate_block});
+      NotifyBlockCommit(getBlockId(*canditate_block));
       message::ConsensusCommitBlockResponse response;
       response.set_status(message::ConsensusCommitBlockResponse_Status::
                               ConsensusCommitBlockResponse_Status_OK);

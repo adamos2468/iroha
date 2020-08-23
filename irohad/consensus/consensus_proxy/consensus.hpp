@@ -1,3 +1,11 @@
+/**
+ * Copyright Soramitsu Co., Ltd. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#ifndef IROHA_CONSENSUS_PROXY_CONSENSUS_HPP
+#define IROHA_CONSENSUS_PROXY_CONSENSUS_HPP
+
 #include <optional>
 
 #include <bits/stdc++.h>
@@ -8,9 +16,15 @@
 #include "messages/pbft-message.pb.h"
 #include "messages/validator.pb.h"
 #include "zmq_channel.hpp"
-#ifndef CONSENSUS_HPP
-#define CONSENSUS_HPP
+
 namespace iroha {
+  namespace simulator {
+    struct BlockCreatorEvent;
+  }
+  namespace synchronizer {
+    class Synchronizer;
+  }
+
   namespace consensus {
     class consensusProxy {
      private:
@@ -36,8 +50,10 @@ namespace iroha {
       std::vector<message::ConsensusPeerInfo> peers;
 
       using BlockCreationResult =
-          std::optional<std::shared_ptr<shared_model::interface::Block>>;
-      BlockCreationResult candidate_block_;
+          std::optional<shared_model::simulator::BlockCreatorEvent>;
+      BlockCreationResult last_block_creator_event_;
+
+      std::shared_ptr<iroha::synchronizer::Synchronizer> synchronizer_;
 
       struct {
         std::string name, version;
@@ -82,7 +98,8 @@ namespace iroha {
       void networkListener();
       void handlePeerMsg(std::string id, message::ConsensusPeerMessage msg);
       message::ConsensusBlock initializeBlock();
-      BlockCreationResult &getCandidateBlock();
+      std::optional<shared_ptr<shared_model::interface::Block>>
+      getCandidateBlock() const;
 
      public:
       consensusProxy(std::string engine_endpoint,
