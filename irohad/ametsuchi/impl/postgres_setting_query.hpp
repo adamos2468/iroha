@@ -26,9 +26,7 @@ namespace iroha {
       expected::Result<
           std::unique_ptr<const shared_model::validation::Settings>,
           std::string>
-      getValidationSettings() override;
-
-      std::optional<std::string> getByKey(std::string_view key) override;
+      get() override;
 
      private:
       expected::Result<

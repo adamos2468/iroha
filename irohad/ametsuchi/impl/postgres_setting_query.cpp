@@ -5,11 +5,7 @@
 
 #include "ametsuchi/impl/postgres_setting_query.hpp"
 
-#include <optional>
-#include <string_view>
-
 #include <boost/lexical_cast.hpp>
-#include "common/result.hpp"
 #include "interfaces/common_objects/types.hpp"
 #include "logger/logger.hpp"
 
@@ -18,7 +14,7 @@ using namespace iroha::ametsuchi;
 namespace {
   template <typename T>
   bool getValueFromDb(soci::session &sql,
-                      std::string_view key,
+                      const shared_model::interface::types::SettingKeyType &key,
                       T &destination) {
     boost::optional<shared_model::interface::types::SettingValueType> value;
 
@@ -40,20 +36,8 @@ PostgresSettingQuery::PostgresSettingQuery(std::unique_ptr<soci::session> sql,
 iroha::expected::Result<
     std::unique_ptr<const shared_model::validation::Settings>,
     std::string>
-PostgresSettingQuery::getValidationSettings() {
+PostgresSettingQuery::get() {
   return update(shared_model::validation::getDefaultSettings());
-}
-
-std::optional<std::string> PostgresSettingQuery::getByKey(
-    std::string_view key) {
-  std::optional<std::string> value{std::string{}};
-  if (getValueFromDb(sql_, key, value.value())) {
-    log_->trace("Fetched value for {}: {}", key, value);
-  } else {
-    log_->info("Value not found for {}", key);
-    value = std::nullopt;
-  }
-  return value;
 }
 
 iroha::expected::Result<

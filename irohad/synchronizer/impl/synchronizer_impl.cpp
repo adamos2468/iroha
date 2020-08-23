@@ -214,7 +214,5 @@ namespace iroha {
       subscription_.unsubscribe();
     }
 
-    void SynchronizerImpl::downloadAndCommitNewBlocks() {}
-
   }  // namespace synchronizer
 }  // namespace iroha

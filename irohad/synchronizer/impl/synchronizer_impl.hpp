@@ -42,8 +42,6 @@ namespace iroha {
       void processOutcome(consensus::GateObject object) override;
       rxcpp::observable<SynchronizationEvent> on_commit_chain() override;
 
-      ametsuchi::CommitResult downloadAndCommitNewBlocks() override;
-
      private:
       /**
        * Iterate through the peers which signed the commit message, load and
