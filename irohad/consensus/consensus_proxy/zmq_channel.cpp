@@ -9,7 +9,14 @@ zmq_channel::packet::packet(std::string socket,
   this->msg = msg;
 }
 void zmq_channel::start() {
+  shutdown_mtx.lock();
+  ShutdownSignal=false;
+  shutdown_mtx.unlock();
   while (true) {
+    shutdown_mtx.lock();
+    if(ShutdownSignal)
+        break;
+    shutdown_mtx.unlock();
     sockets_vector_mtx.lock();
     // Pass through the sockets in a Round-Robin Fashion
     for (auto x : sockets) {
@@ -43,7 +50,11 @@ void zmq_channel::start() {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
 }
-
+void zmq_channel::shutdown(){
+    shutdown_mtx.lock();
+    ShutdownSignal=true;
+    shutdown_mtx.unlock();
+}
 bool zmq_channel::pop_msg(std::string &socket,
                           std::string &id,
                           std::string &msg) {
@@ -71,7 +82,6 @@ bool zmq_channel::push_msg(std::string socket,
   out_queue_mtx.unlock();
   return true;
 }
-
 void zmq_channel::add_socket(std::shared_ptr<zmq::socket_t> newsocket,
                              std::string identity) {
   sockets_vector_mtx.lock();

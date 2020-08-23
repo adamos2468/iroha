@@ -17,10 +17,11 @@ class zmq_channel {
   std::mutex sockets_vector_mtx;
   std::mutex in_queue_mtx;
   std::mutex out_queue_mtx;
+  std::mutex shutdown_mtx;
   std::map<std::string, std::shared_ptr<zmq::socket_t> > sockets;
   std::queue<packet> input_chan;
   std::queue<packet> output_chan;
-
+  bool ShutdownSignal;
  public:
   bool pop_msg(std::string &socket, std::string &id, std::string &msg);
   bool push_msg(std::string socket, std::string id, std::string msg);
@@ -28,5 +29,6 @@ class zmq_channel {
   void add_socket(std::shared_ptr<zmq::socket_t> newsocket,
                   std::string identity);
   void start();
+  void shutdown();
 };
 #endif
