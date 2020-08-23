@@ -49,9 +49,6 @@ namespace iroha {
       message::ConsensusSettingsGetResponse handleConsensusSettingsGetReq(
           message::ConsensusSettingsGetRequest request);
 
-      std::optional<std::shared_ptr<shared_model::interface::Block const>>
-          condidate_block_;
-
       message::ConsensusRegisterResponse handleConsensusRegisterReq(
           message::ConsensusRegisterRequest request);
       message::ConsensusBroadcastResponse handleConsensusBroadcastReq(
