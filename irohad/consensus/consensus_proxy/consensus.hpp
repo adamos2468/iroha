@@ -1,6 +1,9 @@
+#include <optional>
+
 #include <bits/stdc++.h>
 #include <zmq.hpp>
 #include <zmq_addon.hpp>
+#include "interfaces/iroha_internal/block.hpp"
 #include "messages/consensus.pb.h"
 #include "messages/pbft-message.pb.h"
 #include "messages/validator.pb.h"
@@ -31,6 +34,11 @@ namespace iroha {
       message::ConsensusPeerInfo localPeer;
       message::ConsensusBlock chainhead;
       std::vector<message::ConsensusPeerInfo> peers;
+
+      using BlockCreationResult =
+          std::optional<std::shared_ptr<shared_model::interface::Block>>;
+      BlockCreationResult candidate_block_;
+
       struct {
         std::string name, version;
         std::vector<message::ConsensusRegisterRequest_Protocol>
@@ -40,6 +48,9 @@ namespace iroha {
       message::Message handleEngineMessage(message::Message request);
       message::ConsensusSettingsGetResponse handleConsensusSettingsGetReq(
           message::ConsensusSettingsGetRequest request);
+
+      std::optional<std::shared_ptr<shared_model::interface::Block const>>
+          condidate_block_;
 
       message::ConsensusRegisterResponse handleConsensusRegisterReq(
           message::ConsensusRegisterRequest request);
@@ -74,6 +85,7 @@ namespace iroha {
       void networkListener();
       void handlePeerMsg(std::string id, message::ConsensusPeerMessage msg);
       message::ConsensusBlock initializeBlock();
+      BlockCreationResult &getCandidateBlock();
 
      public:
       consensusProxy(std::string engine_endpoint,

@@ -1,4 +1,11 @@
 #include "consensus.hpp"
+
+namespace {
+  std::string getBlockId(shared_model::interface::Block const &block) {
+    // TODO
+  }
+}  // namespace
+
 namespace iroha {
   namespace consensus {
     std::string hexToBin(std::string hex) {
@@ -173,6 +180,12 @@ namespace iroha {
       temp.set_block_num(blockchain.size());
       return temp;
     }
+
+    BlockCreationResult &consensusProxy::getCandidateBlock() {
+      return candidate_block_ |
+          [](auto &candidate_block) { return candidate_block->get(); };
+    }
+
     message::ConsensusInitializeBlockResponse
     consensusProxy::handleBlockInitReq(
         message::ConsensusInitializeBlockRequest request) {
@@ -186,6 +199,14 @@ namespace iroha {
     message::ConsensusSummarizeBlockResponse consensusProxy::handleBlockSumReq(
         message::ConsensusSummarizeBlockRequest request) {
       message::ConsensusSummarizeBlockResponse ans;
+      if (getCandidateBlock()) {
+        ans.set_summary(canditateBlock.summary());
+        ans.set_status(message::ConsensusSummarizeBlockResponse_Status::
+                           ConsensusSummarizeBlockResponse_Status_OK);
+      } else {
+        ans.set_status(message::ConsensusSummarizeBlockResponse_Status::
+                           ConsensusSummarizeBlockResponse_Status_NOT_READY);
+      }
       ans.set_summary(canditateBlock.summary());
       ans.set_status(message::ConsensusSummarizeBlockResponse_Status::
                          ConsensusSummarizeBlockResponse_Status_OK);
@@ -244,16 +265,20 @@ namespace iroha {
       // Need to do something with the consensus data
       // canditateBlock.set_summary(canditateBlock.summary()+"_c");
       // canditateBlock.set_block_id(canditateBlock.block_id()+"_c");
-      canditateBlock.set_payload(request.data());
       message::ConsensusFinalizeBlockResponse ans;
-      BroadCastCanditateBlock();
-      if (newblock == false) {
-        newblock = true;
-        NotifyBlockNew();
+      if (getCandidateBlock()) {
+        BroadCastCanditateBlock();
+        if (newblock == false) {
+          newblock = true;
+          NotifyBlockNew();
+        }
+        ans.set_block_id(getBlockId(*getCandidateBlock().value()));
+        ans.set_status(message::ConsensusFinalizeBlockResponse_Status::
+                           ConsensusFinalizeBlockResponse_Status_OK);
+      } else {
+        ans.set_status(message::ConsensusFinalizeBlockResponse_Status::
+                           ConsensusFinalizeBlockResponse_Status_NOT_READY);
       }
-      ans.set_block_id(canditateBlock.block_id());
-      ans.set_status(message::ConsensusFinalizeBlockResponse_Status::
-                         ConsensusFinalizeBlockResponse_Status_OK);
       return ans;
     }
     message::ConsensusCheckBlocksResponse consensusProxy::handleBlockCheckReq(
